@@ -81,7 +81,7 @@ class SesSnsHandlerController {
     private static final long DEFAULT_MAX_MESSAGE_AGE_MINUTES = 5
 
     GrailsApplication          grailsApplication
-    SesBounceSuppressionService sesBounceSuppressionService
+    BounceSuppressionStore      bounceSuppressionStore
     SnsSignatureVerifier        snsSignatureVerifier
 
     /**
@@ -91,6 +91,13 @@ class SesSnsHandlerController {
      * valid JSON, so we read the raw body and parse it ourselves.
      */
     def handleSnsEvent() {
+        boolean snsEnabled = grailsApplication.config.getProperty(
+                'grails.mail.ses.sns.enabled', Boolean, false)
+        if (!snsEnabled) {
+            render status: 404
+            return
+        }
+
         String rawBody = request.inputStream.text
         log.debug "SNS POST received – body length={}", rawBody.length()
 
@@ -247,7 +254,7 @@ class SesSnsHandlerController {
                 bounceType, bounceSubtype, addresses.size(), addresses
 
         if (bounceType == 'Permanent') {
-            sesBounceSuppressionService.suppressAddresses(
+            bounceSuppressionStore.suppressAddresses(
                     addresses, 'BOUNCE', bounceSubtype, Instant.now())
         } else {
             log.info "Transient/Undetermined bounce – not suppressing: {}", addresses
@@ -269,7 +276,7 @@ class SesSnsHandlerController {
         log.warn "SES Complaint [{}] – {} address(es): {}",
                 feedbackType, addresses.size(), addresses
 
-        sesBounceSuppressionService.suppressAddresses(
+        bounceSuppressionStore.suppressAddresses(
                 addresses, 'COMPLAINT', feedbackType, Instant.now())
     }
 

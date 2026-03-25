@@ -14,7 +14,9 @@ import java.time.Instant
  */
 @CompileStatic
 @ToString(includeNames = true)
-class SuppressedAddress {
+class SuppressedAddress implements Serializable {
+
+    private static final long serialVersionUID = 1L
 
     /** The normalised (lowercased, trimmed) email address. */
     String emailAddress

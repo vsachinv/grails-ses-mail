@@ -135,8 +135,50 @@ The IAM user or role used by the plugin needs only one permission:
 ## Bounce and complaint handling (optional)
 
 The plugin ships `SesSnsHandlerController`, `SnsSignatureVerifier`, and
-`SesBounceSuppressionService` to process SES bounce and complaint notifications
-delivered via Amazon SNS.
+`BounceSuppressionStore` (with a default `InMemoryBounceSuppressionStore`) to
+process SES bounce and complaint notifications delivered via Amazon SNS.
+
+### Why bounce suppression matters
+
+AWS SES tracks your **bounce rate** and **complaint rate** at the account level.
+If either metric exceeds the threshold (typically 5% for bounces, 0.1% for
+complaints), SES places your account under **review** and may ultimately
+**suspend sending** for the entire account — not just the offending application.
+
+Continuing to send to addresses that have already hard-bounced or filed a
+complaint directly increases these rates.  Suppressing those addresses
+immediately after the first event is the single most effective way to protect
+your SES sending reputation and avoid account suspension.
+
+The plugin automates this:
+
+1. SES reports a bounce or complaint via SNS.
+2. The plugin receives the event at `POST /ses/sns`.
+3. The address is added to the suppression store.
+4. Before each send, your application calls `filterSuppressed()` to remove
+   suppressed addresses from the recipient list.
+
+Without this, a single invalid address receiving repeated sends can push your
+bounce rate over the threshold and silently take down email delivery for your
+entire organisation.
+
+### Enabling the SNS endpoint
+
+The endpoint is **disabled by default** and must be explicitly enabled:
+
+```groovy
+grails {
+    mail {
+        ses {
+            sns {
+                enabled = true
+            }
+        }
+    }
+}
+```
+
+When `sns.enabled = false` (the default), `POST /ses/sns` returns HTTP 404.
 
 ### Endpoint
 
@@ -167,14 +209,17 @@ verification.  Both are configured under `grails.mail.ses.sns`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `topicArn` | String | `""` | When set, only messages from this SNS Topic ARN are accepted. All others are rejected with HTTP 403. Recommended in production to prevent other AWS accounts' topics from reaching your endpoint (their signatures are still valid). |
-| `maxMessageAgeMinutes` | Long | `5` | Maximum age of an SNS message in minutes. Messages older than this are rejected to guard against replay attacks. |
+| `sns.enabled` | Boolean | `false` | Enables the `POST /ses/sns` endpoint. When `false`, returns HTTP 404. |
+| `sns.verifySignature` | Boolean | `true` | Verify AWS RSA signature on every inbound SNS POST. Disable only in dev/test. |
+| `sns.topicArn` | String | `""` | When set, only messages from this SNS Topic ARN are accepted. All others are rejected with HTTP 403. Recommended in production to prevent other AWS accounts' topics from reaching your endpoint (their signatures are still valid). |
+| `sns.maxMessageAgeMinutes` | Long | `5` | Maximum age of an SNS message in minutes. Messages older than this are rejected to guard against replay attacks. |
 
 ```groovy
 grails {
     mail {
         ses {
             sns {
+                enabled               = true
                 topicArn              = "arn:aws:sns:us-east-1:123456789012:ses-events"
                 maxMessageAgeMinutes  = 5
             }
@@ -218,16 +263,16 @@ you can declare your own mapping pointing to the same controller/action:
 
 ### Checking suppression before sending
 
-`SesBounceSuppressionService` is auto-wired as a Spring bean.  Inject it
-wherever you need to guard a send:
+`BounceSuppressionStore` is registered as a Spring bean named
+`bounceSuppressionStore`.  Inject it wherever you need to guard a send:
 
 ```groovy
 class MyMailService {
 
-    SesBounceSuppressionService sesBounceSuppressionService
+    BounceSuppressionStore bounceSuppressionStore
 
     void send(List<String> recipients, String subject, String body) {
-        List<String> safe = sesBounceSuppressionService.filterSuppressed(recipients)
+        List<String> safe = bounceSuppressionStore.filterSuppressed(recipients)
         if (!safe) return
         // call grails-mail / async-mail sendMail with 'safe' recipients
     }
@@ -236,16 +281,16 @@ class MyMailService {
 
 ### Persisting suppressions
 
-The default in-memory store is suitable for single-node use.  Register a
-listener in `BootStrap.groovy` to add persistence without subclassing:
+The default `InMemoryBounceSuppressionStore` is suitable for single-node use.
+Register a listener in `BootStrap.groovy` to add persistence:
 
 ```groovy
 class BootStrap {
 
-    SesBounceSuppressionService sesBounceSuppressionService
+    BounceSuppressionStore bounceSuppressionStore
 
     def init = { servletContext ->
-        sesBounceSuppressionService.addSuppressListener { SuppressedAddress addr ->
+        bounceSuppressionStore.addSuppressListener { SuppressedAddress addr ->
             // write to your own domain/repository
             new MyEmailSuppression(
                 email : addr.emailAddress,
@@ -257,7 +302,23 @@ class BootStrap {
 }
 ```
 
-### SesBounceSuppressionService API
+### Custom suppression store (Redis, Hazelcast, DB)
+
+For clustered or persistent deployments, implement the `BounceSuppressionStore`
+interface and declare it as a bean named `bounceSuppressionStore`.  The plugin
+registers the in-memory default first; your application's bean definition
+automatically overrides it.
+
+```groovy
+// resources.groovy
+beans = {
+    bounceSuppressionStore(RedisBounceSuppressionStore) {
+        redisTemplate = ref('redisTemplate')
+    }
+}
+```
+
+### BounceSuppressionStore API
 
 | Method | Description |
 |--------|-------------|

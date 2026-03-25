@@ -76,6 +76,15 @@ grails {
             //   - Integration tests that POST mock payloads directly
             // ------------------------------------------------------------------
             sns {
+                // --------------------------------------------------------------
+                // sns.enabled (Boolean) – default: false
+                //
+                // Controls whether the POST /ses/sns endpoint accepts requests.
+                // When false (default), the endpoint returns HTTP 404.
+                // Set to true to enable bounce/complaint processing via SNS.
+                // --------------------------------------------------------------
+                enabled = false
+
                 verifySignature = true
 
                 // --------------------------------------------------------------

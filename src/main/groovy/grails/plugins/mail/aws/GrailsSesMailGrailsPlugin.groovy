@@ -72,6 +72,13 @@ class GrailsSesMailGrailsPlugin extends Plugin {
             }
             log.info "grails-ses-mail: SnsSignatureVerifier registered (verifySignature={})", verifySig
 
+            // ── Register default BounceSuppressionStore ────────────────────────
+            // Consuming apps can override by declaring their own bean named
+            // 'bounceSuppressionStore' in resources.groovy or doWithSpring
+            // (e.g. backed by Redis, Hazelcast, DB).
+            bounceSuppressionStore(InMemoryBounceSuppressionStore)
+            log.info "grails-ses-mail: InMemoryBounceSuppressionStore registered as default"
+
             // ── Conditionally override mailSender ─────────────────────────────
             if (!resolveBoolean(ses, 'enabled', false)) {
                 log.info "grails-ses-mail: ses.enabled=false – existing mailSender bean left unchanged"
