@@ -3,6 +3,7 @@ plugins {
     id "java-library"
     id "maven-publish"
     id "org.grails.grails-web" version "${grailsGradlePluginVersion}"
+    id "com.gorylenko.gradle-git-properties" version "2.4.1"
 }
 
 group   "org.grails.plugins"
@@ -70,7 +71,47 @@ tasks.withType(Test) {
     useJUnitPlatform()
 }
 
+// ---- Git version capture ----------------------------------------------------
+// Mirrors the approach used in mail-oauth.
+// Captures branch, full commit id, abbreviated commit id, and commit timestamp
+// into git.properties at build time.  The properties are also embedded into
+// the JAR manifest so the exact source revision is visible in Nexus, the
+// runtime actuator, or a simple `jar tf` inspection.
+
+gitProperties {
+    keys = ['git.branch', 'git.commit.id', 'git.commit.id.abbrev', 'git.commit.time']
+    // Fail the build when no .git directory is found.
+    // Set to false if building from a source archive that has no git history.
+    failOnNoGitDirectory = true
+    // Expose git properties as project.ext.gitProps for use in the jar manifest.
+    extProperty = 'gitProps'
+}
+
+// Always re-run generateGitProperties so the commit info is never stale,
+// even when git.properties content has not changed.
+generateGitProperties.outputs.upToDateWhen { false }
+
 // ---- Publishing -------------------------------------------------------------
+
+jar {
+    dependsOn generateGitProperties
+    manifest {
+        attributes(
+            'Built-By'              : System.getProperty('user.name'),
+            'Plugin-Version'        : version,
+            'Plugin-Title'          : project.name,
+            'Plugin-Build-Timestamp': new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
+            'Git-Commit'            : "${-> project.ext.gitProps['git.commit.id.abbrev']}",
+            'Git-Branch'            : "${-> project.ext.gitProps['git.branch']}",
+            'Git-Commit-Full'       : "${-> project.ext.gitProps['git.commit.id']}",
+            'Git-Commit-Time'       : "${-> project.ext.gitProps['git.commit.time']}"
+        )
+    }
+    from sourceSets.main.output
+    // git.properties is captured in the manifest above; exclude the file
+    // itself so it does not bloat the JAR or leak into classpath scanning.
+    exclude 'git.properties'
+}
 
 task sourceJar(type: Jar) {
     archiveClassifier.set("sources")
