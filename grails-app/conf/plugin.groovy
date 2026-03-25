@@ -77,6 +77,25 @@ grails {
             // ------------------------------------------------------------------
             sns {
                 verifySignature = true
+
+                // --------------------------------------------------------------
+                // topicArn (String) – default: "" (accept any topic)
+                //
+                // When set, only SNS messages from this Topic ARN are accepted.
+                // All others are rejected with HTTP 403.  Recommended in
+                // production to prevent other AWS accounts' topics from reaching
+                // this endpoint (their signatures would still be valid).
+                // Example: "arn:aws:sns:us-east-1:123456789012:ses-events"
+                // --------------------------------------------------------------
+                topicArn = ""
+
+                // --------------------------------------------------------------
+                // maxMessageAgeMinutes (Long) – default: 5
+                //
+                // Maximum age of an SNS message in minutes.  Messages older
+                // than this are rejected to guard against replay attacks.
+                // --------------------------------------------------------------
+                maxMessageAgeMinutes = 5
             }
         }
     }

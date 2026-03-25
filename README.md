@@ -160,6 +160,29 @@ Subscribe this URL in the AWS Console as the SNS HTTP/HTTPS endpoint.
 3. AWS sends a `SubscriptionConfirmation` POST first. The controller validates
    the URL is a genuine AWS domain and confirms it automatically.
 
+### SNS endpoint hardening
+
+The plugin provides two additional security checks on top of signature
+verification.  Both are configured under `grails.mail.ses.sns`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `topicArn` | String | `""` | When set, only messages from this SNS Topic ARN are accepted. All others are rejected with HTTP 403. Recommended in production to prevent other AWS accounts' topics from reaching your endpoint (their signatures are still valid). |
+| `maxMessageAgeMinutes` | Long | `5` | Maximum age of an SNS message in minutes. Messages older than this are rejected to guard against replay attacks. |
+
+```groovy
+grails {
+    mail {
+        ses {
+            sns {
+                topicArn              = "arn:aws:sns:us-east-1:123456789012:ses-events"
+                maxMessageAgeMinutes  = 5
+            }
+        }
+    }
+}
+```
+
 ### SNS signature verification
 
 Every inbound SNS POST is verified against the AWS RSA signature before

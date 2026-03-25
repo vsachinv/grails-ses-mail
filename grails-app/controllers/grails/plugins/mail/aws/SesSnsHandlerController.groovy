@@ -1,8 +1,11 @@
 package grails.plugins.mail.aws
 
+import grails.core.GrailsApplication
 import groovy.util.logging.Slf4j
 
+import java.time.Duration
 import java.time.Instant
+import java.time.format.DateTimeParseException
 
 /**
  * SesSnsHandlerController
@@ -74,6 +77,10 @@ class SesSnsHandlerController {
 
     static allowedMethods = [handleSnsEvent: 'POST']
 
+    /** Maximum age (in minutes) of an SNS message before it is rejected. */
+    private static final long DEFAULT_MAX_MESSAGE_AGE_MINUTES = 5
+
+    GrailsApplication          grailsApplication
     SesBounceSuppressionService sesBounceSuppressionService
     SnsSignatureVerifier        snsSignatureVerifier
 
@@ -110,7 +117,38 @@ class SesSnsHandlerController {
             return
         }
 
-        // ── 3. Route by SNS message type ─────────────────────────────────────
+        // ── 3. Validate Topic ARN (if configured) ──────────────────────────
+        String expectedTopicArn = grailsApplication.config.getProperty(
+                'grails.mail.ses.sns.topicArn', String, '')
+        if (expectedTopicArn) {
+            String actualTopicArn = envelope?.TopicArn as String
+            if (actualTopicArn != expectedTopicArn) {
+                log.error "SNS TopicArn mismatch – expected='{}', got='{}' – rejected",
+                        expectedTopicArn, actualTopicArn
+                render status: 403, text: 'Forbidden – unexpected TopicArn'
+                return
+            }
+        }
+
+        // ── 4. Reject stale messages (replay protection) ──────────────────
+        String timestamp = envelope?.Timestamp as String
+        if (timestamp) {
+            try {
+                long maxAgeMinutes = grailsApplication.config.getProperty(
+                        'grails.mail.ses.sns.maxMessageAgeMinutes', Long,
+                        DEFAULT_MAX_MESSAGE_AGE_MINUTES)
+                Instant messageTime = Instant.parse(timestamp)
+                if (Duration.between(messageTime, Instant.now()).toMinutes() > maxAgeMinutes) {
+                    log.error "SNS message too old – timestamp={} – rejected", timestamp
+                    render status: 403, text: 'Forbidden – message too old'
+                    return
+                }
+            } catch (DateTimeParseException e) {
+                log.warn "Could not parse SNS Timestamp '{}': {}", timestamp, e.message
+            }
+        }
+
+        // ── 5. Route by SNS message type ─────────────────────────────────────
         String messageType = envelope?.Type as String
 
         switch (messageType) {
