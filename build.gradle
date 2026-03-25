@@ -1,0 +1,108 @@
+plugins {
+    id "groovy"
+    id "java-library"
+    id "maven-publish"
+    id "org.grails.grails-web" version "${grailsGradlePluginVersion}"
+}
+
+group   "org.grails.plugins"
+version "${version}"
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven { url "https://repo.grails.org/grails/core" }
+}
+
+dependencies {
+
+    // ---- Grails core --------------------------------------------------------
+    implementation "org.grails:grails-core"
+    implementation "org.grails:grails-plugin-services"
+    implementation "org.grails:grails-web-boot"
+    implementation "org.springframework.boot:spring-boot-autoconfigure"
+    implementation "org.springframework.boot:spring-boot-starter-logging"
+    compileOnly     "io.micronaut:micronaut-inject-groovy"
+
+    // ---- grails-mail --------------------------------------------------------
+    // Declared compileOnly: the consuming application brings this in.
+    // This plugin overrides the 'mailSender' bean that grails-mail registers.
+    compileOnly "org.grails.plugins:mail:3.0.0"
+
+    // ---- asynchronous-mail (optional) ---------------------------------------
+    // Declared compileOnly so applications that do not use async-mail are not
+    // forced to pull it in.  The plugin detects it at runtime via loadAfter.
+    compileOnly("io.github.gpc:asynchronous-mail:3.1.2") {
+        exclude group: "org.grails.plugins", module: "mongodb"
+    }
+
+    // ---- Spring Mail --------------------------------------------------------
+    // Provides JavaMailSender, MimeMessageHelper, etc.
+    // Comes transitively via grails-mail; kept explicit for IDE support.
+    implementation "org.springframework.boot:spring-boot-starter-mail"
+
+    // ---- AWS SDK v2 – SES v2 API --------------------------------------------
+    // Core dependency of this plugin.  Uses the BOM to align all SDK module
+    // versions without needing to specify each one individually.
+    implementation platform("software.amazon.awssdk:bom:2.25.28")
+    implementation "software.amazon.awssdk:sesv2"
+    implementation "software.amazon.awssdk:auth"
+
+    // ---- Test ---------------------------------------------------------------
+    testImplementation "org.grails.plugins:mail:3.0.0"
+    testImplementation "org.spockframework:spock-core"
+    testImplementation "org.grails:grails-gorm-testing-support"
+    testImplementation "org.grails:grails-web-testing-support"
+    testImplementation "io.micronaut:micronaut-inject-groovy"
+    testImplementation "org.grails:grails-plugin-services"
+}
+
+bootJar {
+    enabled = false
+}
+
+java {
+    sourceCompatibility = JavaVersion.toVersion("11")
+    targetCompatibility = JavaVersion.toVersion("11")
+}
+
+tasks.withType(Test) {
+    useJUnitPlatform()
+}
+
+// ---- Publishing -------------------------------------------------------------
+
+task sourceJar(type: Jar) {
+    archiveClassifier.set("sources")
+    from sourceSets.main.allSource
+}
+
+task packageGroovydoc(type: Jar) {
+    from groovydoc
+    archiveClassifier.set("groovydoc")
+}
+
+publishing {
+    publications {
+        mavenJar(MavenPublication) {
+            groupId    = project.group
+            artifactId = "grails-ses-mail"
+            version    = project.version
+            from components.java
+            artifact sourceJar
+            artifact packageGroovydoc
+        }
+    }
+    repositories {
+        mavenLocal()
+        maven {
+            name = "NexusRepo"
+            credentials {
+                username project.findProperty("nexusUsername") ?: System.getenv("NEXUS_USERNAME")
+                password project.findProperty("nexusPassword") ?: System.getenv("NEXUS_PASSWORD")
+            }
+            url project.findProperty("nexusUrl") ?: System.getenv("NEXUS_URL")
+            allowInsecureProtocol = project.findProperty("isNexusUrlInsecure") ? true : false
+        }
+    }
+}
