@@ -20,8 +20,8 @@ import software.amazon.awssdk.services.sesv2.model.RawMessage
 import software.amazon.awssdk.services.sesv2.model.SendEmailRequest
 import software.amazon.awssdk.services.sesv2.model.SesV2Exception
 
-import javax.mail.Session
-import javax.mail.internet.MimeMessage
+import jakarta.mail.Session
+import jakarta.mail.internet.MimeMessage
 import java.util.Properties
 
 /**

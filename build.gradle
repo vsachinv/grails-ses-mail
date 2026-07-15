@@ -1,10 +1,28 @@
-plugins {
-    id "groovy"
-    id "java-library"
-    id "maven-publish"
-    id "org.grails.grails-web" version "${grailsGradlePluginVersion}"
-    id "com.gorylenko.gradle-git-properties" version "2.4.1"
+// ---- Buildscript ------------------------------------------------------------
+// The Apache Grails Gradle plugin is not published to the Gradle Plugin Portal,
+// so it is resolved on the buildscript classpath and applied via `apply plugin`.
+// The grails-bom platform pins the Grails Gradle plugin version to $grailsVersion.
+buildscript {
+    repositories {
+        mavenLocal()
+        mavenCentral()
+        maven { url = "https://repo.grails.org/grails/core" }
+    }
+    dependencies {
+        classpath platform("org.apache.grails:grails-bom:$grailsVersion")
+        classpath "org.apache.grails:grails-gradle-plugins"
+        classpath "com.gorylenko.gradle-git-properties:gradle-git-properties:4.0.1"
+    }
 }
+
+apply plugin: "groovy"
+apply plugin: "java-library"
+apply plugin: "maven-publish"
+// Grails 7 PLUGIN project. NOTE: use grails-plugin, NOT grails-web — the
+// grails-web plugin is application-only in Grails 7 and fails a plugin build
+// with "cannot be both a Grails application and a Grails plugin".
+apply plugin: "org.apache.grails.gradle.grails-plugin"
+apply plugin: "com.gorylenko.gradle-git-properties"
 
 group   "org.grails.plugins"
 version "${version}"
@@ -17,28 +35,40 @@ repositories {
 
 dependencies {
 
+    // The grails-bom platform aligns every Grails + Spring Boot module version
+    // to $grailsVersion, so the coordinates below are declared without versions.
+    implementation platform("org.apache.grails:grails-bom:$grailsVersion")
+    // grails-micronaut-bom imports the Micronaut platform BOM (micronaut-inject-groovy
+    // etc.), whose versions the plain grails-bom does not manage transitively.
+    implementation platform("org.apache.grails:grails-micronaut-bom:$grailsVersion")
+
     // ---- Grails core --------------------------------------------------------
-    implementation "org.grails:grails-core"
-    implementation "org.grails:grails-plugin-services"
-    implementation "org.grails:grails-web-boot"
+    implementation "org.apache.grails:grails-core"
+    implementation "org.apache.grails:grails-services"
+    // grails-controllers provides the artefact/trait support for the SNS
+    // handler controller and URL mappings (was pulled in via grails-web on G6).
+    implementation "org.apache.grails:grails-controllers"
+    implementation "org.apache.grails:grails-web-boot"
     implementation "org.springframework.boot:spring-boot-autoconfigure"
     implementation "org.springframework.boot:spring-boot-starter-logging"
     compileOnly     "io.micronaut:micronaut-inject-groovy"
 
     // ---- grails-mail --------------------------------------------------------
-    // Declared compileOnly: the consuming application brings this in.
-    // This plugin overrides the 'mailSender' bean that grails-mail registers.
-    compileOnly "org.grails.plugins:mail:3.0.0"
+    // As of Apache Grails 7 grails-mail is a core BOM artifact
+    // (org.apache.grails:grails-mail). Declared compileOnly: the consuming
+    // application brings it in; this plugin overrides the 'mailSender' bean.
+    compileOnly "org.apache.grails:grails-mail"
 
     // ---- asynchronous-mail (optional) ---------------------------------------
     // Declared compileOnly so applications that do not use async-mail are not
     // forced to pull it in.  The plugin detects it at runtime via loadAfter.
+    // Third-party plugin (not part of the Grails BOM); only referenced by name.
     compileOnly("io.github.gpc:asynchronous-mail:3.1.2") {
         exclude group: "org.grails.plugins", module: "mongodb"
     }
 
     // ---- Spring Mail --------------------------------------------------------
-    // Provides JavaMailSender, MimeMessageHelper, etc.
+    // Provides JavaMailSender, MimeMessageHelper, etc. (jakarta.mail on SB3).
     // Comes transitively via grails-mail; kept explicit for IDE support.
     implementation "org.springframework.boot:spring-boot-starter-mail"
 
@@ -50,21 +80,30 @@ dependencies {
     implementation "software.amazon.awssdk:auth"
 
     // ---- Test ---------------------------------------------------------------
-    testImplementation "org.grails.plugins:mail:3.0.0"
+    testImplementation "org.apache.grails:grails-mail"
     testImplementation "org.spockframework:spock-core"
-    testImplementation "org.grails:grails-gorm-testing-support"
-    testImplementation "org.grails:grails-web-testing-support"
+    testImplementation "org.apache.grails.testing:grails-testing-support-core"
+    testImplementation "org.apache.grails:grails-testing-support-web"
     testImplementation "io.micronaut:micronaut-inject-groovy"
-    testImplementation "org.grails:grails-plugin-services"
+    testImplementation "org.apache.grails:grails-services"
+    // Spock needs a bytecode-gen library to mock concrete classes; no longer
+    // transitive in Grails 7, so declare it explicitly (BOM-managed version).
+    testImplementation "net.bytebuddy:byte-buddy"
+    testRuntimeOnly    "net.bytebuddy:byte-buddy-agent"
 }
 
 bootJar {
     enabled = false
 }
 
-java {
-    sourceCompatibility = JavaVersion.toVersion("11")
-    targetCompatibility = JavaVersion.toVersion("11")
+// Grails 7 requires Java 17+. Control the source/target release here; the JVM
+// that runs the build is selected via org.gradle.java.home in gradle.properties.
+compileJava.options.release = 17
+
+// Known Grails 7.0.x Groovy compilation issue with invokedynamic:
+// https://github.com/apache/grails-core/issues/15321
+tasks.withType(GroovyCompile).configureEach {
+    groovyOptions.optimizationOptions.indy = false
 }
 
 tasks.withType(Test) {
@@ -115,7 +154,12 @@ jar {
 
 task sourceJar(type: Jar) {
     archiveClassifier.set("sources")
+    // gradle-git-properties registers its generated output on the main source
+    // set; allSource therefore pulls it in. Declare the dependency (Gradle 8
+    // strict validation) and exclude the generated file from the sources jar.
+    dependsOn generateGitProperties
     from sourceSets.main.allSource
+    exclude 'git.properties'
 }
 
 task packageGroovydoc(type: Jar) {
