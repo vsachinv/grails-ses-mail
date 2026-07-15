@@ -11,7 +11,7 @@ import software.amazon.awssdk.services.sesv2.model.SendEmailResponse
 import software.amazon.awssdk.services.sesv2.model.SesV2Exception
 import software.amazon.awssdk.awscore.exception.AwsErrorDetails
 
-import javax.mail.internet.MimeMessage
+import jakarta.mail.internet.MimeMessage
 
 /**
  * Unit tests for SesApiMailSender.
@@ -141,8 +141,8 @@ class SesApiMailSenderSpec extends Specification {
         when:
         sender.send({ MimeMessage msg ->
             msg.setFrom("prep@example.com")
-            msg.setRecipients(javax.mail.Message.RecipientType.TO,
-                    javax.mail.internet.InternetAddress.parse("dest@example.com"))
+            msg.setRecipients(jakarta.mail.Message.RecipientType.TO,
+                    jakarta.mail.internet.InternetAddress.parse("dest@example.com"))
             msg.setSubject("Prepared")
             msg.setText("Prepared body")
         })
