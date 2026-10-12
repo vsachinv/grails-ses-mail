@@ -207,6 +207,32 @@ class SnsSignatureVerifierSpec extends Specification {
         !signingString.contains('Subject')
     }
 
+    // -------------------------------------------------------------------------
+    // SignatureVersion → algorithm
+    // -------------------------------------------------------------------------
+
+    @Unroll
+    def "SignatureVersion '#version' resolves to #algorithm"() {
+        expect:
+        SnsSignatureVerifier.resolveSignatureAlgorithm(version) == algorithm
+
+        where:
+        version | algorithm
+        null    | 'SHA1withRSA'     // absent → legacy default
+        ''      | 'SHA1withRSA'
+        '1'     | 'SHA1withRSA'
+        '2'     | 'SHA256withRSA'
+    }
+
+    def "unsupported SignatureVersion throws SignatureVerificationException"() {
+        when:
+        SnsSignatureVerifier.resolveSignatureAlgorithm('3')
+
+        then:
+        SnsSignatureVerifier.SignatureVerificationException ex = thrown()
+        ex.message.contains('3')
+    }
+
     def "unknown message type throws SignatureVerificationException"() {
         when:
         SnsSignatureVerifier.buildSigningString('SomeUnknownType', [:])

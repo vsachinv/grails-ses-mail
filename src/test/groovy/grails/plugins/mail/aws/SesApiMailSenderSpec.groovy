@@ -331,6 +331,102 @@ class SesApiMailSenderSpec extends Specification {
         ex.message.contains("ConfigurationSetDoesNotExist")
     }
 
+    @Unroll
+    def "SesV2Exception errorCode #errorCode is translated to a targeted #kind MailSendException"() {
+        given:
+        MimeMessage mime = buildMime("f@x.com", "t@x.com", "Will fail", "Body")
+        mockSesClient.sendEmail(_ as SendEmailRequest) >> {
+            throw SesV2Exception.builder()
+                    .message("boom")
+                    .statusCode(statusCode)
+                    .awsErrorDetails(AwsErrorDetails.builder()
+                            .errorCode(errorCode)
+                            .errorMessage("detail for ${errorCode}")
+                            .build())
+                    .build()
+        }
+
+        when:
+        sender.send(mime)
+
+        then:
+        MailSendException ex = thrown()
+        ex.cause instanceof SesV2Exception
+        ex.message.contains(expectedFragment)
+        ex.message.contains("[retryable]") == retryable
+
+        where:
+        errorCode                     | statusCode | retryable | expectedFragment
+        'MessageRejected'             | 400        | false     | 'not a verified'
+        'MailFromDomainNotVerified'   | 400        | false     | 'MAIL FROM domain'
+        'AccountSuspendedException'   | 400        | false     | 'suspended'
+        'SendingPausedException'      | 400        | true      | 'paused'
+        'LimitExceededException'      | 400        | true      | 'quota'
+        'TooManyRequestsException'    | 429        | true      | 'transient'
+        'Throttling'                  | 400        | true      | 'transient'
+        'InternalFailure'             | 500        | true      | 'transient'
+        'SomeUnknownCode'             | 503        | true      | 'transient'
+        'SomeUnknownCode'             | 400        | false     | 'SES API error [SomeUnknownCode]'
+        kind = retryable ? 'retryable' : 'permanent'
+    }
+
+    // -------------------------------------------------------------------------
+    // Default From on the MIME path
+    // -------------------------------------------------------------------------
+
+    def "send(MimeMessage) applies defaultFrom when the message has no From header"() {
+        given:
+        MimeMessage mime = sender.createMimeMessage()
+        new org.springframework.mail.javamail.MimeMessageHelper(mime, false, "UTF-8").tap {
+            it.setTo("t@x.com")
+            it.subject = "No From"
+            it.setText("Body")
+        }
+        assert mime.from == null || mime.from.length == 0
+
+        when:
+        sender.send(mime)
+
+        then:
+        1 * mockSesClient.sendEmail({ SendEmailRequest req ->
+            new String(req.content().raw().data().asByteArray(), "UTF-8")
+                    .contains("From: sender@example.com")
+        } as SendEmailRequest) >> SendEmailResponse.builder().messageId("MSG-DF").build()
+    }
+
+    def "send(MimeMessage) keeps an explicit From header untouched"() {
+        given:
+        MimeMessage mime = buildMime("explicit@x.com", "t@x.com", "Has From", "Body")
+
+        when:
+        sender.send(mime)
+
+        then:
+        1 * mockSesClient.sendEmail({ SendEmailRequest req ->
+            String raw = new String(req.content().raw().data().asByteArray(), "UTF-8")
+            raw.contains("From: explicit@x.com") && !raw.contains("sender@example.com")
+        } as SendEmailRequest) >> SendEmailResponse.builder().messageId("MSG-EF").build()
+    }
+
+    def "send(MimeMessage) throws when there is no From header and no defaultFrom"() {
+        given:
+        sender.sesConfiguration = new SesMailConfiguration(region: "us-east-1", defaultFrom: "")
+        MimeMessage mime = sender.createMimeMessage()
+        new org.springframework.mail.javamail.MimeMessageHelper(mime, false, "UTF-8").tap {
+            it.setTo("t@x.com")
+            it.subject = "No From anywhere"
+            it.setText("Body")
+        }
+
+        when:
+        sender.send(mime)
+
+        then:
+        MailSendException ex = thrown()
+        ex.message.contains("defaultFrom")
+        0 * mockSesClient.sendEmail(_)
+    }
+
     // -------------------------------------------------------------------------
     // destroy
     // -------------------------------------------------------------------------

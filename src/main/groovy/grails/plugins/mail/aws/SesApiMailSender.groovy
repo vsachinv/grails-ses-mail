@@ -21,6 +21,7 @@ import software.amazon.awssdk.services.sesv2.model.SendEmailRequest
 import software.amazon.awssdk.services.sesv2.model.SesV2Exception
 
 import jakarta.mail.Session
+import jakarta.mail.internet.InternetAddress
 import jakarta.mail.internet.MimeMessage
 import java.util.Properties
 
@@ -211,7 +212,18 @@ class SesApiMailSender implements JavaMailSender, InitializingBean, DisposableBe
     // Core: MimeMessage → raw bytes → SES SendRawEmail API call
     // -------------------------------------------------------------------------
 
+    /** SES error codes that indicate a transient condition worth retrying. */
+    private static final Set<String> RETRYABLE_ERROR_CODES = [
+            'TooManyRequestsException', 'TooManyRequests', 'Throttling', 'ThrottlingException',
+            'ServiceUnavailable', 'InternalFailure', 'RequestTimeout',
+    ] as Set<String>
+
     private void sendRaw(MimeMessage mimeMessage) {
+        // Fall back to the configured default From when the message carries
+        // no From header, so the MIME paths behave like the SimpleMailMessage
+        // path instead of producing a generic SES API error.
+        applyDefaultFrom(mimeMessage)
+
         ByteArrayOutputStream baos = new ByteArrayOutputStream(8192)
         try {
             mimeMessage.writeTo(baos)
@@ -234,18 +246,83 @@ class SesApiMailSender implements JavaMailSender, InitializingBean, DisposableBe
             def response = sesClient.sendEmail(req.build())
             log.debug "SES SendRawEmail succeeded – messageId={}", response.messageId()
         } catch (SesV2Exception e) {
-            // The SES v2 SDK does not have named subclasses per error code.
-            // Inspect errorCode() to give a targeted message for the most
-            // actionable failure: a misconfigured configuration set name.
-            String errorCode = e.awsErrorDetails()?.errorCode() ?: ''
-            String detail    = e.awsErrorDetails()?.errorMessage() ?: e.message
-            if (errorCode == 'ConfigurationSetDoesNotExist') {
-                throw new MailSendException(
-                        "SES configuration set '${sesConfiguration.configurationSetName}' not found" +
-                        " in region '${sesConfiguration.region}' (errorCode=${errorCode})", e)
-            }
-            log.error "SES SendRawEmail failed – errorCode={}, detail={}", errorCode, detail, e
-            throw new MailSendException("SES API error [${errorCode}]: ${detail}", e)
+            throw translateSesException(e)
         }
+    }
+
+    private void applyDefaultFrom(MimeMessage mimeMessage) {
+        try {
+            if (mimeMessage.from == null || mimeMessage.from.length == 0) {
+                if (!sesConfiguration.defaultFrom) {
+                    throw new MailSendException(
+                            "No 'from' address provided and grails.mail.ses.defaultFrom is not configured")
+                }
+                mimeMessage.setFrom(new InternetAddress(sesConfiguration.defaultFrom))
+                mimeMessage.saveChanges()
+            }
+        } catch (MailSendException e) {
+            throw e
+        } catch (Exception e) {
+            throw new MailSendException("Failed to read or set the From header", e)
+        }
+    }
+
+    /**
+     * Maps a SesV2Exception to a MailSendException with an actionable message.
+     *
+     * The SES v2 SDK does not ship named subclasses per error code, so the
+     * error code string is inspected.  Transient conditions (throttling,
+     * sending paused) are logged at WARN and flagged as retryable in the
+     * message; permanent configuration problems are logged at ERROR.
+     */
+    protected MailSendException translateSesException(SesV2Exception e) {
+        String errorCode = e.awsErrorDetails()?.errorCode() ?: e.class.simpleName
+        String detail    = e.awsErrorDetails()?.errorMessage() ?: e.message
+        String context   = "region='${sesConfiguration.region}'"
+
+        String message
+        boolean retryable = false
+        switch (errorCode) {
+            case 'ConfigurationSetDoesNotExist':
+            case 'ConfigurationSetDoesNotExistException':
+                message = "SES configuration set '${sesConfiguration.configurationSetName}' not found in ${context}" +
+                          " (errorCode=${errorCode})"
+                break
+            case 'MessageRejected':
+                message = "SES rejected the message – the From address or domain is probably not a verified " +
+                          "identity, or the account is still in the SES sandbox (${context}): ${detail}"
+                break
+            case 'MailFromDomainNotVerified':
+            case 'MailFromDomainNotVerifiedException':
+                message = "SES MAIL FROM domain is not verified (${context}): ${detail}"
+                break
+            case 'AccountSuspended':
+            case 'AccountSuspendedException':
+                message = "SES account sending is suspended (${context}): ${detail}"
+                break
+            case 'SendingPaused':
+            case 'SendingPausedException':
+                retryable = true
+                message = "SES account-level sending is paused (${context}): ${detail}"
+                break
+            case 'LimitExceeded':
+            case 'LimitExceededException':
+                retryable = true
+                message = "SES sending quota exceeded (${context}): ${detail}"
+                break
+            default:
+                retryable = errorCode in RETRYABLE_ERROR_CODES || e.statusCode() == 429 || e.statusCode() >= 500
+                message = retryable
+                        ? "SES transient error [${errorCode}] (${context}): ${detail}"
+                        : "SES API error [${errorCode}] (${context}): ${detail}"
+        }
+
+        if (retryable) {
+            message += " [retryable]"
+            log.warn "SES SendRawEmail failed (retryable) – errorCode={}, detail={}", errorCode, detail
+        } else {
+            log.error "SES SendRawEmail failed – errorCode={}, detail={}", errorCode, detail, e
+        }
+        new MailSendException(message, e)
     }
 }
