@@ -91,4 +91,28 @@ class InMemoryBounceSuppressionStoreSpec extends Specification {
         !store.isSuppressed('b@b.com')
         store.allSuppressed.isEmpty()
     }
+
+    def "suppressAddresses tolerates null list and skips null or blank entries"() {
+        when:
+        store.suppressAddresses(null, 'BOUNCE', 'General', Instant.now())
+        store.suppressAddresses([null, '', '   ', 'real@test.com'], 'BOUNCE', 'General', Instant.now())
+
+        then:
+        noExceptionThrown()
+        store.allSuppressed.size() == 1
+        store.isSuppressed('real@test.com')
+    }
+
+    def "filterSuppressed and lookups tolerate null input"() {
+        expect:
+        store.filterSuppressed(null) == []
+        !store.isSuppressed(null)
+        store.getSuppressionRecord(null) == null
+
+        when:
+        store.unsuppress(null)
+
+        then:
+        noExceptionThrown()
+    }
 }

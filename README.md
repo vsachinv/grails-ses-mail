@@ -45,9 +45,9 @@ enabling the plugin and supplying AWS credentials.
 
 | Dependency | Version |
 |------------|---------|
-| Grails     | 6.2.0+  |
-| JDK        | 11+     |
-| grails-mail | 3.0.0+ |
+| Grails     | 7.0.0+  |
+| JDK        | 17+     |
+| grails-mail | 7.0.0+ (Apache Grails core) |
 | asynchronous-mail | 3.1.2+ *(optional)* |
 | AWS SDK v2 BOM | 2.25.28+ |
 
@@ -57,10 +57,21 @@ enabling the plugin and supplying AWS credentials.
 
 ### 1. Add to `build.gradle`
 
+#### For Grails 6.x
+
 ```groovy
 dependencies {
     // existing entries ...
     implementation "org.grails.plugins:grails-ses-mail:1.0.0"
+}
+```
+
+#### For Grails 7+
+
+```groovy
+dependencies {
+    // existing entries ...
+    implementation "org.grails.plugins:grails-ses-mail:7.0.0-M1"
 }
 ```
 

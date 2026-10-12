@@ -38,9 +38,9 @@ import grails.plugins.Plugin
 @Slf4j
 class GrailsSesMailGrailsPlugin extends Plugin {
 
-    def grailsVersion = "6.2.0 > *"
+    def grailsVersion = "7.0.0 > *"
     def title         = "Grails SES Mail"
-    def version       = "1.0.0"
+    def version       = "7.0.0-M1"
     def description   = """\
         AWS SES v2 API transport for the grails-mail and asynchronous-mail plugins.
         Replaces the 'mailSender' bean with a native SES API sender when enabled.

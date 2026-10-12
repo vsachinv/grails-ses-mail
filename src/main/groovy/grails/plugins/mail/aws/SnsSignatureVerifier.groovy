@@ -106,9 +106,13 @@ class SnsSignatureVerifier implements InitializingBean {
         String signingString = buildSigningString(messageType, envelope)
         log.debug "SNS signing string for type={}:\n{}", messageType, signingString
 
+        // SNS SignatureVersion 1 = SHA1withRSA (legacy default);
+        // SignatureVersion 2 = SHA256withRSA (default for newer topics).
+        String algorithm = resolveSignatureAlgorithm(envelope.SignatureVersion as String)
+
         boolean valid
         try {
-            Signature sig = Signature.getInstance("SHA1withRSA")
+            Signature sig = Signature.getInstance(algorithm)
             sig.initVerify(publicKey)
             sig.update(signingString.bytes)
             valid = sig.verify(Base64.decoder.decode(signature))
@@ -132,6 +136,22 @@ class SnsSignatureVerifier implements InitializingBean {
     // message type.  Fields must appear in the exact canonical order below;
     // each field name is followed by a newline, then the value, then a newline.
     // -------------------------------------------------------------------------
+
+    /**
+     * Maps the SNS SignatureVersion field to a JCA algorithm name.
+     * Absent is treated as version 1 for backward compatibility.
+     */
+    protected static String resolveSignatureAlgorithm(String signatureVersion) {
+        switch (signatureVersion ?: '1') {
+            case '1':
+                return 'SHA1withRSA'
+            case '2':
+                return 'SHA256withRSA'
+            default:
+                throw new SignatureVerificationException(
+                        "Unsupported SNS SignatureVersion: ${signatureVersion}")
+        }
+    }
 
     protected static String buildSigningString(String messageType, def env) {
         switch (messageType) {

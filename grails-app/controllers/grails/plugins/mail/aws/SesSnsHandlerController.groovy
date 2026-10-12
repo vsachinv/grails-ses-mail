@@ -145,7 +145,8 @@ class SesSnsHandlerController {
                         'grails.mail.ses.sns.maxMessageAgeMinutes', Long,
                         DEFAULT_MAX_MESSAGE_AGE_MINUTES)
                 Instant messageTime = Instant.parse(timestamp)
-                if (Duration.between(messageTime, Instant.now()).toMinutes() > maxAgeMinutes) {
+                // Compare in seconds so a 5-minute limit rejects at 5:00, not 5:59.
+                if (Duration.between(messageTime, Instant.now()).seconds > maxAgeMinutes * 60) {
                     log.error "SNS message too old – timestamp={} – rejected", timestamp
                     render status: 403, text: 'Forbidden – message too old'
                     return
@@ -189,8 +190,10 @@ class SesSnsHandlerController {
             log.warn "SubscriptionConfirmation missing SubscribeURL – cannot confirm"
             return
         }
-        // Validate the URL is an AWS domain before following it
-        if (!subscribeUrl.startsWith('https://sns.') || !subscribeUrl.contains('.amazonaws.com/')) {
+        // Validate the URL is an AWS SNS host before following it.  The check
+        // is done on the parsed host, not on the raw string, so that a URL such
+        // as https://sns.attacker.example/x.amazonaws.com/ cannot pass.
+        if (!isTrustedSnsUrl(subscribeUrl)) {
             log.error "SubscribeURL does not look like an AWS SNS URL – rejected: {}", subscribeUrl
             return
         }
@@ -201,6 +204,28 @@ class SesSnsHandlerController {
         } catch (Exception e) {
             log.error "Failed to confirm SNS subscription: {}", e.message, e
         }
+    }
+
+    /**
+     * Returns true only when the URL is HTTPS and its parsed host is of the
+     * form sns.&lt;region&gt;.amazonaws.com.  Protected static so the spec can
+     * exercise it directly.
+     */
+    protected static boolean isTrustedSnsUrl(String url) {
+        if (!url) {
+            return false
+        }
+        URI parsed
+        try {
+            parsed = new URI(url)
+        } catch (URISyntaxException ignored) {
+            return false
+        }
+        String host = parsed.host?.toLowerCase()
+        if (parsed.scheme != 'https' || !host || parsed.userInfo != null) {
+            return false
+        }
+        host.startsWith('sns.') && host.endsWith('.amazonaws.com') && host.count('.') >= 3
     }
 
     /**
@@ -252,6 +277,12 @@ class SesSnsHandlerController {
 
         log.warn "SES Bounce [{}/{}] – {} address(es): {}",
                 bounceType, bounceSubtype, addresses.size(), addresses
+        // Per-recipient SMTP status and diagnostic code are the most useful
+        // fields when investigating why an address bounced.
+        bounce?.bouncedRecipients?.each { recipient ->
+            log.warn "  bounced recipient={} status={} diagnosticCode={}",
+                    recipient.emailAddress, recipient.status, recipient.diagnosticCode
+        }
 
         if (bounceType == 'Permanent') {
             bounceSuppressionStore.suppressAddresses(

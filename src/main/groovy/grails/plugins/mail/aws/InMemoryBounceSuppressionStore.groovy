@@ -23,7 +23,10 @@ class InMemoryBounceSuppressionStore implements BounceSuppressionStore {
 
     @Override
     void suppressAddresses(List<String> addresses, String type, String subtype, Instant when) {
-        for (String addr : addresses) {
+        for (String addr : (addresses ?: [])) {
+            if (!addr?.trim()) {
+                continue
+            }
             SuppressedAddress record = new SuppressedAddress(
                     emailAddress   : addr.trim().toLowerCase(),
                     suppressionType: type,
@@ -41,24 +44,33 @@ class InMemoryBounceSuppressionStore implements BounceSuppressionStore {
 
     @Override
     void unsuppress(String emailAddress) {
-        if (suppressionList.remove(emailAddress?.trim()?.toLowerCase())) {
+        String key = normalise(emailAddress)
+        if (key && suppressionList.remove(key)) {
             log.info "Address unsuppressed: {}", emailAddress
         }
     }
 
     @Override
     boolean isSuppressed(String emailAddress) {
-        suppressionList.containsKey(emailAddress?.trim()?.toLowerCase())
+        String key = normalise(emailAddress)
+        key ? suppressionList.containsKey(key) : false
     }
 
     @Override
     SuppressedAddress getSuppressionRecord(String emailAddress) {
-        suppressionList[emailAddress?.trim()?.toLowerCase()]
+        String key = normalise(emailAddress)
+        key ? suppressionList[key] : null
+    }
+
+    /** Lowercased, trimmed key; null for null or blank input (ConcurrentHashMap rejects null keys). */
+    private static String normalise(String emailAddress) {
+        String key = emailAddress?.trim()?.toLowerCase()
+        key ?: null
     }
 
     @Override
     List<String> filterSuppressed(List<String> addresses) {
-        addresses.findAll { !isSuppressed(it) }
+        (addresses ?: []).findAll { !isSuppressed(it) }
     }
 
     @Override
